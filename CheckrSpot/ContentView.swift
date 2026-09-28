@@ -557,11 +557,19 @@ struct ContentView: View {
     }
 
     private func saveCapturedImageToPhotoLibrary(_ image: UIImage, metadata: [String: Any]) {
+        // Read the location up front: the performChanges block runs off the main
+        // queue, and locationStatus is a main-actor observable object.
+        let captureLocation: CLLocation? = locationStatus.canAttachGPS ? locationStatus.latestLocation : nil
+
         // UIImage-only saves drop EXIF/GPS, so re-encode with metadata and add GPS explicitly.
         if let imageData = buildJPEGDataWithMetadata(for: image, baseMetadata: metadata) {
             PHPhotoLibrary.shared().performChanges {
                 let request = PHAssetCreationRequest.forAsset()
                 request.addResource(with: .photo, data: imageData, options: nil)
+                // EXIF GPS in the resource data is not a reliable way to set the
+                // asset's location; assign it explicitly so PHAsset.location is
+                // populated in the Photos database.
+                request.location = captureLocation
             } completionHandler: { success, error in
                 if let error {
                     print("Failed to save captured photo with metadata: \(error.localizedDescription)")
@@ -576,7 +584,10 @@ struct ContentView: View {
         }
 
         PHPhotoLibrary.shared().performChanges {
-            PHAssetChangeRequest.creationRequestForAsset(from: image)
+            // A UIImage carries no metadata at all, so this path has never had
+            // EXIF GPS to fall back on; the location must be set on the request.
+            let request = PHAssetChangeRequest.creationRequestForAsset(from: image)
+            request.location = captureLocation
         } completionHandler: { success, error in
             if let error {
                 print("Failed to save captured photo: \(error.localizedDescription)")
